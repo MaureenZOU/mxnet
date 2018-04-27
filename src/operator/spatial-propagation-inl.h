@@ -10,7 +10,7 @@
 #include <mxnet/ndarray.h>
 #include <mxnet/operator.h>
 #include <dmlc/logging.h>
-#include <dmlc/optional.h>
+#include <dmlc/parameter.h>
 #include <algorithm>
 #include <map>
 #include <vector>
@@ -45,7 +45,7 @@ struct SpnParam : public dmlc::Parameter<SpnParam> {
 	 * horizontal = true, reverse = False left -> right
 	 * horizontal = true, reverse = true right -> left
 	 */
-}
+};
 
 
 template<typename xpu, typename DType>
@@ -226,19 +226,11 @@ public:
 		return "Spatial Propagation Network Unit";
 	}
 
-	std::vector<std::string> ListArguments() const override {
-		return {"X", "G1", "G2", "G3"};
-	}
-
-	std::vector<std::string> ListOutputs() const override {
-		return {"H"};
-	}
-
 	Operator* CreateOperator(Context ctx) const override;
 
 private:
 	SpnParam param_;
-}
+};
 #endif //DMLC_USE_CXX11
 } //namespace op
 } //namespace mxnet
