@@ -328,7 +328,7 @@ __global__ void backward_one_col_right_left(const int count, int T, int num,int 
 		Dtype x_data = get_data(X,num,channels,height,width,n,c,h,w);	
 
 		//h(t)_diff = top(t)_diff
-		Dtype h_diff = get_data(Hdiff,num,channels,height,width,n,c,h,w); 
+		Dtype h_diff = get_data(H_diff,num,channels,height,width,n,c,h,w); 
 
 		//h(t)_diff += h(t+1)_diff * g(t+1) if t<T
 		Dtype add1_h3_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w-1);
@@ -392,7 +392,7 @@ __global__ void backward_one_row_top_bottom(const int count, int T, int num,int 
 		Dtype add1_h2_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w);
 		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w);
 
-		Dtype add1_h1_diff = get_data(Hdiff,num,channels,height,width,n,c,h+1,w+1);
+		Dtype add1_h1_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w+1);
 		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w+1);
 
 		h_diff = h_diff + add1_h3_diff * add1_g3_data + add1_h2_diff * add1_g2_data + add1_h1_diff * add1_g1_data;
@@ -436,46 +436,46 @@ __global__ void backward_one_row_bottom_top(const int count, int T, int num, int
 		temp = temp % width;
 		w = temp;
 
-		Dtype x_data = get_data_sf(X,num,channels,height,width,n,c,h,w);
+		Dtype x_data = get_data(X,num,channels,height,width,n,c,h,w);
 
 		//h(t)_diff = top(t)_diff
-		Dtype h_diff = get_data_sf(Hdiff,num,channels,height,width,n,c,h,w); 
+		Dtype h_diff = get_data(H_diff,num,channels,height,width,n,c,h,w); 
 
 		//h(t)_diff += h(t+1)_diff * g(t+1) if t<T
-		Dtype add1_h3_diff = get_data_sf(Hdiff,num,channels,height,width,n,c,h-1,w-1);
-		Dtype add1_g3_data = get_gate_sf(G3,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse);
+		Dtype add1_h3_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w-1);
+		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w-1);
 
-		Dtype add1_h2_diff = get_data_sf(Hdiff,num,channels,height,width,n,c,h-1,w);
-		Dtype add1_g2_data = get_gate_sf(G2,num,channels,height,width,n,c,h,w,h-1,w,horizontal,reverse);
+		Dtype add1_h2_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w);
+		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w);
 
-		Dtype add1_h1_diff = get_data_sf(Hdiff,num,channels,height,width,n,c,h-1,w+1);
-		Dtype add1_g1_data = get_gate_sf(G1,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse);
+		Dtype add1_h1_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w+1);
+		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1);
 
 		h_diff = h_diff + add1_h3_diff * add1_g3_data + add1_h2_diff * add1_g2_data + add1_h1_diff * add1_g1_data;
 	
-		set_data_sf(Hdiff,num,channels,height,width,n,c,h,w,h_diff); 
+		set_data(H_diff,num,channels,height,width,n,c,h,w,h_diff); 
 
 		//x(t)_diff=(1-g(t))*h(t)_diff
-		Dtype g1_data =  get_gate_sf(G1,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse);
-		Dtype g2_data =  get_gate_sf(G2,num,channels,height,width,n,c,h,w,h+1,w,horizontal,reverse);
-		Dtype g3_data =  get_gate_sf(G3,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse);
+		Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1);
+		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w);
+		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1);
  		Dtype x_diff = (1- g1_data -g2_data -g3_data) * h_diff;
-		set_data_sf(X_diff,num,channels,height,width,n,c,h,w,x_diff);
+		set_data(X_diff,num,channels,height,width,n,c,h,w,x_diff);
 
 		// g_diff = h_diff * (h_data(t-1) - x_data)
-		Dtype h1_minus1_data = get_data_sf(H,num,channels,height,width,n,c,h+1,w-1); 
+		Dtype h1_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w-1); 
 		Dtype g1_diff = h_diff * (h1_minus1_data - x_data);
-		set_gate_sf(G1_diff,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse,g1_diff);
+		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h+1,w-1,g1_diff);
 
 		//Dtype g2_diff = h_diff * g2_idx * x_data * -1;
-		Dtype h2_minus1_data = get_data_sf(H,num,channels,height,width,n,c,h+1,w); 
+		Dtype h2_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w); 
 		Dtype g2_diff = h_diff * (h2_minus1_data - x_data);
-		set_gate_sf(G2_diff,num,channels,height,width,n,c,h,w,h+1,w,horizontal,reverse,g2_diff);      
+		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h+1,w,g2_diff);      
 
 		//Dtype g3_diff = h_diff * g3_idx * x_data * -1;
-		Dtype h3_minus1_data = get_data_sf(H,num,channels,height,width,n,c,h+1,w+1); 
+		Dtype h3_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w+1); 
 		Dtype g3_diff = h_diff * (h3_minus1_data - x_data);
-		set_gate_sf(G3_diff,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse,g3_diff);
+		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w+1,g3_diff);
 	}
 }
 
@@ -485,7 +485,7 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 					   const Tensor<gpu, 4, Dtype> &g2,
 					   const Tensor<gpu, 4, Dtype> &g3,
 					   const Tensor<gpu, 4, Dtype> &out,
-					   const bool horizontal_;
+					   const bool horizontal_,
 					   const bool reverse_){
 
 /*get pointer*/	
@@ -589,7 +589,7 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 					    const Tensor<gpu, 4, Dtype> &g2_diff,
 					    const Tensor<gpu, 4, Dtype> &g3_diff,
 					    const Tensor<gpu, 4, Dtype> &out_diff,
-					    const bool horizontal_;
+					    const bool horizontal_,
 					    const bool reverse_){
 
 /*get pointer*/	
@@ -698,7 +698,7 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 					   const Tensor<gpu, 4, Dtype> &g2,
 					   const Tensor<gpu, 4, Dtype> &g3,
 					   const Tensor<gpu, 4, Dtype> &out,
-					   const bool horizontal;
+					   const bool horizontal,
 					   const bool reverse){
 	cuda::SPNForward(data, g1, g2, g3, out, horizontal, reverse);
 }
@@ -714,7 +714,7 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 					    const Tensor<gpu, 4, Dtype> &g2_diff,
 					    const Tensor<gpu, 4, Dtype> &g3_diff,
 					    const Tensor<gpu, 4, Dtype> &out_diff,
-					    const bool horizontal;
+					    const bool horizontal,
 					    const bool reverse){
 	cuda::SPNBackward(data, g1, g2, g3, out, data_diff, g1_diff, g2_diff, g3_diff, out_diff, horizontal, reverse);
 }
