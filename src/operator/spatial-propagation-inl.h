@@ -223,10 +223,16 @@ public:
 	}
 
 	std::string TypeString() const override {
-		return "Spatial Propagation Network Unit";
+		return "SPN";
 	}
 
-	Operator* CreateOperator(Context ctx) const override;
+	Operator* CreateOperator(Context ctx) const override {
+		LOG(FATAL) << "Not Implemented.";
+		return NULL;
+	}
+
+	Operator* CreateOperatorEx(Context ctx, std::vector<TShape> *in_shape,
+                             std::vector<int> *in_type) const override;
 
 private:
 	SpnParam param_;

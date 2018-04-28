@@ -188,6 +188,7 @@ USE_CPP_PACKAGE = 0
 # plugins
 #----------------------------
 
+CUDA_ARCH=-arch=sm_61
 # whether to use caffe integration. This requires installing caffe.
 # You also need to add CAFFE_PATH/build/lib to your LD_LIBRARY_PATH
 # CAFFE_PATH = $(HOME)/caffe

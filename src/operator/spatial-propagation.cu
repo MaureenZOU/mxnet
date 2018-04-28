@@ -55,7 +55,7 @@ __device__ Dtype get_data(Dtype *data, int num, int channels, int height, int wi
 }
 
 template <typename Dtype> //this function is modified by xueyan
-__device__ Dtype get_gate(Dtype * data, int num, int channels, int height, int width, int n, int c, int h1, int w1, int h2, int w2, bool horizontal, bool reverse){
+__device__ Dtype get_gate(Dtype * data, int num, int channels, int height, int width, int n, int c, int h1, int w1, int h2, int w2){
 	//handle index out of range
 	if(h1<0 || h1 >=height) //redundant
 		return 0; //redundant
@@ -404,7 +404,7 @@ __global__ void backward_one_row_top_bottom(const int count, int T, int num,int 
 		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w);
 		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1);
 		Dtype x_diff = (1- g1_data - g2_data - g3_data) * h_diff;
-		set_data_sf(X_diff,num,channels,height,width,n,c,h,w,x_diff);
+		set_data(X_diff,num,channels,height,width,n,c,h,w,x_diff);
 	
 		// g_diff = h_diff * (h_data(t-1) - x_data)
 		Dtype h1_minus1_data = get_data(H,num,channels,height,width,n,c,h-1,w-1); 
@@ -499,10 +499,10 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 /*get dimension*/
 	//data, g1, g2, g3, out, share the same dimension
 	//n_X represent number of X
-	const int n_batch = data.shape_.size(0);
-	const int n_channel = data.shape_.size(1);
-	const int height = data.shape_.size(2);
-	const int width = data.shape_.size(3);
+	const int n_batch = data.size(0);
+	const int n_channel = data.size(1);
+	const int height = data.size(2);
+	const int width = data.size(3);
 /*END get dimension*/
 
 /*set cuda system param*/
@@ -609,10 +609,10 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 /*get dimension*/
 	//data, g1, g2, g3, out, share the same dimension
 	//n_X represent number of X
-	const int n_batch = data.shape_.size(0);
-	const int n_channel = data.shape_.size(1);
-	const int height = data.shape_.size(2);
-	const int width = data.shape_.size(3);
+	const int n_batch = data.size(0);
+	const int n_channel = data.size(1);
+	const int height = data.size(2);
+	const int width = data.size(3);
 /*END get dimension*/
 
 /*set cuda system param*/
@@ -635,7 +635,7 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
-			CheckLaunchParam(dimGrid, dimBlock, "SPN left->right forward"); //check whether dimGrid or dimBlock is out of range
+			CheckLaunchParam(dimGrid, dimBlock, "SPN left->right backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 			backward_one_col_left_right<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
 		}
@@ -649,7 +649,7 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
-			CheckLaunchParam(dimGrid, dimBlock, "SPN right->left forward"); //check whether dimGrid or dimBlock is out of range
+			CheckLaunchParam(dimGrid, dimBlock, "SPN right->left backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 			backward_one_col_right_left<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
 		}
@@ -663,7 +663,7 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
-			CheckLaunchParam(dimGrid, dimBlock, "SPN top->bottom forward"); //check whether dimGrid or dimBlock is out of range
+			CheckLaunchParam(dimGrid, dimBlock, "SPN top->bottom backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 
 			backward_one_row_top_bottom<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
@@ -678,7 +678,7 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
-			CheckLaunchParam(dimGrid, dimBlock, "SPN bottom->top forward"); //check whether dimGrid or dimBlock is out of range
+			CheckLaunchParam(dimGrid, dimBlock, "SPN bottom->top backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 	
 			backward_one_row_bottom_top<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
