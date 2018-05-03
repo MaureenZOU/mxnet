@@ -7,6 +7,8 @@ dim_iter = 10
 check_iter = 10
 test_cpu = True
 highest_dim = 20 #if highest_dim > 20, please flag test_cpu = False
+check_var = 'g2'
+e = 1e-4
 
 def get_data(n,c,i,j,x):
 
@@ -39,11 +41,11 @@ def forward_result(dim,x,g1,g2,g3,horizontal,reverse):
 	if horizontal and (not reverse):
 		h = np.ones(dim) 
 		h[:,:,:,0] = x[:,:,:,0]
-		for j in range(1, width):
+		for j in range(0, width):
 			for i in range(0, height):
 				for c in range(0, channel):
 					for n in range(0, batch):
-						h[n,c,i,j] = (1 - get_gate(n,c,i,j,i-1,j-1,g1) - get_gate(n,c,i,j,i,j-1,g2) - get_gate(n,c,i,j,i+1,j-1,g3))*get_data(n,c,i,j,x) + get_gate(n,c,i,j,i-1,j-1,g1)*get_data(n,c,i-j,j-1,h) + get_gate(n,c,i,j,i,j-1,g2)*get_data(n,c,i,j-1,h) + get_gate(n,c,i,j,i+1,j-1,g3)*get_data(n,c,i+1,j-1,h)
+						h[n,c,i,j] = (1 - get_gate(n,c,i,j,i-1,j-1,g1) - get_gate(n,c,i,j,i,j-1,g2) - get_gate(n,c,i,j,i+1,j-1,g3))*get_data(n,c,i,j,x) + get_gate(n,c,i,j,i-1,j-1,g1)*get_data(n,c,i-1,j-1,h) + get_gate(n,c,i,j,i,j-1,g2)*get_data(n,c,i,j-1,h) + get_gate(n,c,i,j,i+1,j-1,g3)*get_data(n,c,i+1,j-1,h)
 		return h
 	elif horizontal and reverse:
 		h = np.ones(dim) 
@@ -55,7 +57,7 @@ def forward_result(dim,x,g1,g2,g3,horizontal,reverse):
 					for n in range(0, batch):
 						h[n,c,i,j] = (1 - get_gate(n,c,i,j,i-1,j+1,g1) - get_gate(n,c,i,j,i,j+1,g2) - get_gate(n,c,i,j,i+1,j+1,g3))*get_data(n,c,i,j,x) + get_gate(n,c,i,j,i-1,j+1,g1)*get_data(n,c,i-1,j+1,h) + get_gate(n,c,i,j,i,j+1,g2)*get_data(n,c,i,j+1,h) + get_gate(n,c,i,j,i+1,j+1,g3)*get_data(n,c,i+1,j+1,h)
 		return h
-	elif (not horizontal) and not reverse:
+	elif (not horizontal) and (not reverse):
 
 		h = np.ones(dim) 
 		h[:,:,0,:] = x[:,:,0,:]
@@ -79,13 +81,13 @@ def forward_result(dim,x,g1,g2,g3,horizontal,reverse):
 
 def check_pass(x1, x2, y1, y2):
 
-	if (x1-x2)/(x1+x2) < 0.05:
-		if (y1-y2)/(y1+y2) < 0.05:
+	if (np.absolute(x1)-np.absolute(x2))/(np.absolute(x1)+np.absolute(x2)) < 0.05:
+		if (np.absolute(y1)-np.absolute(y2))/(np.absolute(y1)+np.absolute(y2)) < 0.05:
 			print("GPU_Cal_grad = " + str(x1) + "    " + "Gradient_Check = " + str(x2) + "     Forward_GPU = " + str(y1) + "   Forward_CPU = " + str(y2) + "..........Pass_Forward..........Pass_Backward")
 		else:
 			print("GPU_Cal_grad = " + str(x1) + "    " + "Gradient_Check = " + str(x2) + "     Forward_GPU = " + str(y1) + "   Forward_CPU = " + str(y2) + "..........Fail_Forward..........Pass_Backward")
 	else:
-		if (y1-y2)/(y1+y2) < 0.05:
+		if (np.absolute(y1)-np.absolute(y2))/(np.absolute(y1)+np.absolute(y2)) < 0.05:
 			print("GPU_Cal_grad = " + str(x1) + "    " + "Gradient_Check = " + str(x2) + "     Forward_GPU = " + str(y1) + "   Forward_CPU = " + str(y2) + "..........Pass_Forward..........Fail_Backward")
 		else:
 			print("GPU_Cal_grad = " + str(x1) + "    " + "Gradient_Check = " + str(x2) + "     Forward_GPU = " + str(y1) + "   Forward_CPU = " + str(y2) + "..........Fail_Forward..........Fail_Backward")
@@ -101,6 +103,7 @@ def check_pass_back(x1, x2):
 
 for i in range(0, dim_iter):
 	dim = (np.random.randint(2,highest_dim), np.random.randint(2,highest_dim), np.random.randint(4,highest_dim), np.random.randint(4,highest_dim))
+	#dim = [1,1,5,5]
 	batch = dim[0]
 	channel = dim[1]
 	height = dim[2]
@@ -120,15 +123,15 @@ for i in range(0, dim_iter):
 	g1 = np.random.random_sample(dim)
 	g2 = np.random.random_sample(dim)
 	g3 = np.random.random_sample(dim)
-	e = 1e-5
 
 	if test_cpu:
 		h_py = forward_result(dim,x,g1,g2,g3,horizontal,reverse)
+		#print(h_py)
 		h_py = np.sum(h_py)
 
 	for j in range(0, check_iter):
 		check_dim = (np.random.randint(0,batch-1),np.random.randint(0,channel-1),np.random.randint(1,height-2),np.random.randint(1,width-2))
-		check_var = 'g1'
+		#check_dim = (0,0,3,3) 
 
 		if check_var == 'g1':
 			check_plus = np.copy(g1)
@@ -226,15 +229,24 @@ for i in range(0, dim_iter):
 		h_plus = mod.get_outputs()[0].asnumpy()
 		mod.forward(Batch_minus)
 		h_minus = mod.get_outputs()[0].asnumpy()
-		h = mod.forward(Batch)
+		mod.forward(Batch)
+		h_gpu = mod.get_outputs()[0].asnumpy()
+		#print(h_gpu)
 		mod.backward(out_grads=[mx.nd.ones(dim)])
-		h_gpu_grad = mod.get_input_grads()[1].asnumpy()[check_dim[0],check_dim[1],check_dim[2],check_dim[3]]
+
+		if check_var == 'x':
+			h_gpu_grad = mod.get_input_grads()[0].asnumpy()[check_dim[0],check_dim[1],check_dim[2],check_dim[3]]
+		elif check_var == 'g1':
+			h_gpu_grad = mod.get_input_grads()[1].asnumpy()[check_dim[0],check_dim[1],check_dim[2],check_dim[3]]
+		elif check_var == 'g2':
+			h_gpu_grad = mod.get_input_grads()[2].asnumpy()[check_dim[0],check_dim[1],check_dim[2],check_dim[3]]
+		elif check_var == 'g3':
+			h_gpu_grad = mod.get_input_grads()[3].asnumpy()[check_dim[0],check_dim[1],check_dim[2],check_dim[3]]
 
 		h_grad = (h_plus - h_minus) / (2*e)
 		h_check_grad = np.sum(h_grad)
 		
 		if test_cpu:
-			h_gpu = mod.get_outputs()[0].asnumpy()
 			h_gpu = np.sum(h_gpu)
 			check_pass(h_gpu_grad, h_check_grad, h_py, h_gpu)
 		else:
