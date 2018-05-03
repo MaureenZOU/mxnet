@@ -12,8 +12,65 @@
 namespace mshadow {
 namespace cuda {
 
+__device__ void get_gate_idx(int h1, int w1, int h2, int w2, int* out, bool horizontal, bool reverse)
+{
+	if(horizontal && ! reverse) // left -> right
+	{
+		if(w1>w2)
+		{
+			out[0]=h1;
+			out[1]=w1;
+		}
+		else
+		{
+			out[0]=h2;
+			out[1]=w2;
+		}
+	}
+	if(horizontal && reverse)  // right -> left
+	{
+		if(w1<w2)
+		{
+			out[0]=h1;
+			out[1]=w1;
+		}
+		else
+		{
+			out[0]=h2;
+			out[1]=w2;
+		}
+	}
+	if(!horizontal && !reverse)  // top  -> bottom
+	{
+		if(h1>h2)
+		{
+			out[0]=h1;
+			out[1]=w1;
+		}
+		else
+		{
+			out[0]=h2;
+			out[1]=w2;
+		}
+	}
+	if(!horizontal && reverse)  // bottom -> top
+	{
+		if(h1<h2)
+		{
+			out[0]=h1;
+			out[1]=w1;
+		}
+		else
+		{
+			out[0]=h2;
+			out[1]=w2;
+		}
+	}
+
+}
+
 template <typename Dtype>
-__device__ void set_gate(Dtype* data, int num, int channels, int height, int width, int n, int c, int h1, int w1, int h2, int w2, Dtype v)
+__device__ void set_gate(Dtype* data, int num, int channels, int height, int width, int n, int c, int h1, int w1, int h2, int w2, Dtype v, bool horizontal, bool reverse)
 {
 	if(h1<0 || h1 >=height) //redundant
 		return ; //redundant
@@ -23,15 +80,40 @@ __device__ void set_gate(Dtype* data, int num, int channels, int height, int wid
 		return ; //redundant
 	if(w2<0 || w2 >= width) //redundant
 		return ; //redundant
+
+	int idx[2];
+	get_gate_idx(h1, w1, h2, w2, idx, horizontal, reverse);
 	
-	int h = h1;
-	int w = w1;
-	
+	int h = idx[0];
+	int w = idx[1];
+
 	data[n*channels*height*width + c*height*width + h*width + w] = v;
 }
 
+template <typename Dtype> //this function is modified by xueyan
+__device__ Dtype get_gate(Dtype * data, int num, int channels, int height, int width, int n, int c, int h1, int w1, int h2, int w2, bool horizontal, bool reverse){
+	//handle index out of range
+	if(h1<0 || h1 >=height) //redundant
+		return 0; //redundant
+	if(w1<0 || w1 >= width) //redundant
+		return 0; //redundant
+	if(h2<0 || h2 >=height)
+		return 0;
+	if(w2<0 || w2 >= width)
+		return 0;
+
+	int idx[2];
+	get_gate_idx(h1, w1, h2, w2, idx, horizontal, reverse);
+	
+	int h = idx[0];
+	int w = idx[1];
+
+	return data[n*channels*height*width + c*height*width + h*width + w];
+}
+
+
 template <typename Dtype>
-__device__ void set_data(Dtype * data, int num, int channels,int height, int width,int n,int c,int h,int w,Dtype v)
+__device__ void set_data(Dtype * data, int num, int channels,int height, int width,int n,int c,int h,int w, Dtype v)
 {
 	//modify by xueyan, assert error.
 	if(h<0 || h >=height)
@@ -54,29 +136,10 @@ __device__ Dtype get_data(Dtype *data, int num, int channels, int height, int wi
 	return data[n*channels*height*width + c*height*width + h*width + w];
 }
 
-template <typename Dtype> //this function is modified by xueyan
-__device__ Dtype get_gate(Dtype * data, int num, int channels, int height, int width, int n, int c, int h1, int w1, int h2, int w2){
-	//handle index out of range
-	if(h1<0 || h1 >=height) //redundant
-		return 0; //redundant
-	if(w1<0 || w1 >= width) //redundant
-		return 0; //redundant
-	if(h2<0 || h2 >=height)
-		return 0;
-	if(w2<0 || w2 >= width)
-		return 0;
-
-	int h = h1;
-	int w = w1;
-
-	return data[n*channels*height*width + c*height*width + h*width + w];
-}
-
-
 /*LEFT->RIGHT*/
 /*h(t) = (1-sum(g_i(t))) * x_i(t) + sum(g_i(t) * h_i(t-1))*/
 template <typename Dtype>
-__global__ void forward_one_col_left_right(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H){
+__global__ void forward_one_col_left_right(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H, bool horizontal, bool reverse){
 //count -> total number of threads; T -> current_row/current_column; num -> total num batch
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){
 		//CUDA kernel loop, index trace the current thread
@@ -95,15 +158,15 @@ __global__ void forward_one_col_left_right(const int count, int T, int num, int 
 		Dtype x_data = get_data(X,num,channels,height,width,n,c,h,w); //x
 	
 		//modify logic by xueyan
-		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1); //g_1(t)
+		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse); //g_1(t)
 		Dtype h_minus1_data_1 = get_data(H,num,channels,height,width,n,c,h-1,w-1); //h_1(t-1)
 		Dtype h1_minus1 = g_data_1 * h_minus1_data_1; //g_1(t)*h_1(t-1)
 
-		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h,w-1); //g_2(t)
+		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h,w-1,horizontal,reverse); //g_2(t)
 		Dtype h_minus1_data_2 = get_data(H,num,channels,height,width,n,c,h,w-1); //h_2(t-1)
 		Dtype h2_minus1 = g_data_2 * h_minus1_data_2; //g_2(t)*h_2(t-1)
 
-		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w-1); //g_3(t)
+		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse); //g_3(t)
 		Dtype h_minus1_data_3 = get_data(H,num,channels,height,width,n,c,h+1,w-1); //h_3(t-1)
 		Dtype h3_minus1 = g_data_3 * h_minus1_data_3; //g_3(t)*h_3(t-1)
 
@@ -120,7 +183,7 @@ __global__ void forward_one_col_left_right(const int count, int T, int num, int 
 /*RIGHT->LEFT*/
 /*h(t) = (1-sum(g_i(t))) * x_i(t) + sum(g_i(t) * h_i(t+1))*/
 template <typename Dtype>
-__global__ void forward_one_col_right_left(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H){
+__global__ void forward_one_col_right_left(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H, bool horizontal, bool reverse){
 //count -> total number of threads; T -> current_row/current_column; num -> total num batch
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){
 		//CUDA kernel loop, index trace the current thread
@@ -139,15 +202,15 @@ __global__ void forward_one_col_right_left(const int count, int T, int num, int 
 		Dtype x_data = get_data(X,num,channels,height,width,n,c,h,w); //x
 		
 		//modify logic by xueyan
-		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1); //g_1(t)
+		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse); //g_1(t)
 		Dtype h_minus1_data_1 = get_data(H,num,channels,height,width,n,c,h-1,w+1); //h_1(t+1)
 		Dtype h1_minus1 = g_data_1 * h_minus1_data_1; //g_1(t)*h_1(t+1)
 
-		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h,w+1); //g_2(t)
+		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h,w+1,horizontal,reverse); //g_2(t)
 		Dtype h_minus1_data_2 = get_data(H,num,channels,height,width,n,c,h,w+1); //h_2(t+1)
 		Dtype h2_minus1 = g_data_2 * h_minus1_data_2; //g_2(t)*h_2(t+1)
 
-		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1); //g_3(t)
+		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse); //g_3(t)
 		Dtype h_minus1_data_3 = get_data(H,num,channels,height,width,n,c,h+1,w+1); //h_3(t+1)
 		Dtype h3_minus1 = g_data_3 * h_minus1_data_3; //g_3(t)*h_3(t+1)
 
@@ -164,7 +227,7 @@ __global__ void forward_one_col_right_left(const int count, int T, int num, int 
 /*TOP->BOTTOM*/
 /*h(t) = (1-sum(g_(t)i)) * x_(t)i + sum(g_(t)i * h_(t-1)i)*/
 template <typename Dtype>
-__global__ void forward_one_row_top_bottom(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H){
+__global__ void forward_one_row_top_bottom(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H, bool horizontal, bool reverse){
 //count -> total number of threads; T -> current_row/current_column; num -> total num batch
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){
 		//CUDA kernel loop, index trace the current thread
@@ -183,15 +246,15 @@ __global__ void forward_one_row_top_bottom(const int count, int T, int num, int 
 		//modify logic by xueyan
 		Dtype x_data = get_data(X,num,channels,height,width,n,c,h,w); //x
 	
-		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1); //g_(t)1
+		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse); //g_(t)1
 		Dtype h_minus1_data_1 = get_data(H,num,channels,height,width,n,c,h-1,w-1); //h_(t-1)1
 		Dtype h1_minus1 = g_data_1 * h_minus1_data_1; //g_(t)1 * h_(t-1)1
 
-		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w); //g_(t)2
+		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w,horizontal,reverse); //g_(t)2
 		Dtype h_minus1_data_2 = get_data(H,num,channels,height,width,n,c,h-1,w); //h_(t-1)2
 		Dtype h2_minus1 = g_data_2 * h_minus1_data_2; //g_(t)2 * h_(t-1)2
 
-		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1); //g_(t)3
+		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse); //g_(t)3
 		Dtype h_minus1_data_3 = get_data(H,num,channels,height,width,n,c,h-1,w+1); //h_(t-1)3
 		Dtype h3_minus1 = g_data_3 * h_minus1_data_3; //g_(t)3 * h_(t-1)3
 
@@ -208,7 +271,7 @@ __global__ void forward_one_row_top_bottom(const int count, int T, int num, int 
 /*BOTTOM->TOP*/
 /*h(t) = (1-sum(g_(t)i)) * x_(t)i + sum(g_(t)i * h_(t+1)i)*/
 template <typename Dtype>
-__global__ void forward_one_row_bottom_top(const int count, int T, int num, int channels, int height,  int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H){
+__global__ void forward_one_row_bottom_top(const int count, int T, int num, int channels, int height,  int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, Dtype* H, bool horizontal, bool reverse){
 //count -> total number of threads; T -> current_row/current_column; num -> total num batch
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){
 		//CUDA kernel loop, index trace the current thread
@@ -227,15 +290,15 @@ __global__ void forward_one_row_bottom_top(const int count, int T, int num, int 
 		//modify logic by xueyan
 		Dtype x_data = get_data(X,num,channels,height,width,n,c,h,w); //w
  
-		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1); //g_(t)1
+		Dtype g_data_1 = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse); //g_(t)1
 		Dtype h_minus1_data_1 = get_data(H,num,channels,height,width,n,c,h+1,w-1); //h_(t+1)1
 		Dtype h1_minus1 = g_data_1 * h_minus1_data_1; //g_(t)1 * h_(t+1)1
 
-		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w); //g_(t)2
+		Dtype g_data_2 = get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w,horizontal,reverse); //g_(t)2
 		Dtype h_minus1_data_2 = get_data(H,num,channels,height,width,n,c,h+1,w); //h_(t+1)2
 		Dtype h2_minus1 = g_data_2 * h_minus1_data_2; //g_(t)2 * h_(t+1)2
 
-		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1); //g_(t)3
+		Dtype g_data_3 = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse); //g_(t)3
 		Dtype h_minus1_data_3 = get_data(H,num,channels,height,width,n,c,h+1,w+1); //h_(t+1)3
 		Dtype h3_minus1 = g_data_3 * h_minus1_data_3; //g_(t)3 * h_(t+1)3
 
@@ -251,7 +314,7 @@ __global__ void forward_one_row_bottom_top(const int count, int T, int num, int 
 
 
 template <typename Dtype>
-__global__ void backward_one_col_left_right(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff){
+__global__ void backward_one_col_left_right(const int count, int T, int num, int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff, bool horizontal, bool reverse){
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){ 
 		//CUDA kernel loop, index trace the current thread
 		int hc_count = height * channels;
@@ -273,13 +336,13 @@ __global__ void backward_one_col_left_right(const int count, int T, int num, int
 
 		//h(t)_diff += h(t+1)_diff * g(t+1) if t<T
 		Dtype add1_h3_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w+1);
-		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1);
+		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse);
 
 		Dtype add1_h2_diff = get_data(H_diff,num,channels,height,width,n,c,h,w+1);
-		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h,w+1);
+		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h,w+1,horizontal,reverse);
 
 		Dtype add1_h1_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w+1);
-		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w+1);
+		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse);
  
 		h_diff = h_diff + add1_h3_diff * add1_g3_data + add1_h2_diff * add1_g2_data + add1_h1_diff * add1_g1_data;
 	
@@ -287,9 +350,9 @@ __global__ void backward_one_col_left_right(const int count, int T, int num, int
 		set_data(H_diff,num,channels,height,width,n,c,h,w,h_diff); 
 
 		//x(t)_diff=(1-sum(g_date))*h(t)_diff
-    	Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1);
-		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h,w-1);
-		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w-1);
+    		Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse);
+		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h,w-1,horizontal,reverse);
+		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse);
 	
 		Dtype x_diff = (1- g1_data -g2_data -g3_data) * h_diff;
 		set_data(X_diff,num,channels,height,width,n,c,h,w,x_diff);
@@ -297,20 +360,20 @@ __global__ void backward_one_col_left_right(const int count, int T, int num, int
 		// g_diff = h_diff * (h_data(t-1) - x_data)
 		Dtype h1_minus1_data = get_data(H,num,channels,height,width,n,c,h-1,w-1); 
 		Dtype g1_diff = h_diff * (h1_minus1_data - x_data);
-		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h-1,w-1,g1_diff);
+		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h-1,w-1,g1_diff,horizontal,reverse);
 
 		Dtype h2_minus1_data = get_data(H,num,channels,height,width,n,c,h,w-1); 
 		Dtype g2_diff = h_diff * (h2_minus1_data - x_data);
-		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h,w-1,g2_diff);
+		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h,w-1,g2_diff,horizontal,reverse);
 
 		Dtype h3_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w-1); 
 		Dtype g3_diff = h_diff * (h3_minus1_data - x_data);
-		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w-1,g3_diff);
+		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w-1,g3_diff,horizontal,reverse);
 	}
 }
  
 template <typename Dtype>
-__global__ void backward_one_col_right_left(const int count, int T, int num,int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff){
+__global__ void backward_one_col_right_left(const int count, int T, int num,int channels, int height, int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff, bool horizontal, bool reverse){
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){ 
 		//CUDA kernel loop, index trace the current thread
 		int hc_count = height * channels;
@@ -332,42 +395,42 @@ __global__ void backward_one_col_right_left(const int count, int T, int num,int 
 
 		//h(t)_diff += h(t+1)_diff * g(t+1) if t<T
 		Dtype add1_h3_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w-1);
-		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w-1);
+		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse);
 
 		Dtype add1_h2_diff = get_data(H_diff,num,channels,height,width,n,c,h,w-1);
-		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h,w-1);
+		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h,w-1,horizontal,reverse);
 
 		Dtype add1_h1_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w-1);
-		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1);
+		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse);
 
 		h_diff = h_diff + add1_h3_diff * add1_g3_data + add1_h2_diff * add1_g2_data + add1_h1_diff * add1_g1_data;
 
 		set_data(H_diff,num,channels,height,width,n,c,h,w,h_diff); 
 
-    	Dtype g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1);
-		Dtype g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h,w+1);
-		Dtype g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1);
+    	Dtype g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse);
+		Dtype g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h,w+1,horizontal,reverse);
+		Dtype g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse);
 		Dtype x_diff = (1 - g1_data - g2_data - g3_data) * h_diff;
 		set_data(X_diff,num,channels,height,width,n,c,h,w,x_diff);
 	
     	// g_diff = h_diff * (h_data(t-1) - x_data)
 		Dtype h1_minus1_data = get_data(H,num,channels,height,width,n,c,h-1,w+1); 
 		Dtype g1_diff = h_diff * (h1_minus1_data - x_data);
-		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h-1,w+1,g1_diff);
+		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h-1,w+1,g1_diff,horizontal,reverse);
 
 		Dtype h2_minus1_data = get_data(H,num,channels,height,width,n,c,h,w+1); 
 		Dtype g2_diff = h_diff * (h2_minus1_data - x_data);
-		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h,w+1,g2_diff);
+		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h,w+1,g2_diff,horizontal,reverse);
 
 		Dtype h3_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w+1); 
 		Dtype g3_diff = h_diff * (h3_minus1_data - x_data);
-		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w+1,g3_diff);
+		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w+1,g3_diff,horizontal,reverse);
 	}
 }
 
 
 template <typename Dtype>
-__global__ void backward_one_row_top_bottom(const int count, int T, int num,int channels, int height,  int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff){
+__global__ void backward_one_row_top_bottom(const int count, int T, int num,int channels, int height,  int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff, bool horizontal, bool reverse){
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){ 
 	//CUDA kernel loop, index trace the current thread	
 		int wc_count = width * channels;
@@ -387,42 +450,42 @@ __global__ void backward_one_row_top_bottom(const int count, int T, int num,int 
 
 		//h(t)_diff += h(t+1)_diff * g(t+1) if t<T
 		Dtype add1_h3_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w-1);
-		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w-1);
+		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse);
 
 		Dtype add1_h2_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w);
-		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w);
+		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w,horizontal,reverse);
 
 		Dtype add1_h1_diff = get_data(H_diff,num,channels,height,width,n,c,h+1,w+1);
-		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w+1);
+		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse);
 
 		h_diff = h_diff + add1_h3_diff * add1_g3_data + add1_h2_diff * add1_g2_data + add1_h1_diff * add1_g1_data;
 	
 		set_data(H_diff,num,channels,height,width,n,c,h,w,h_diff); 
 
 		//x(t)_diff=(1-g(t))*h(t)_diff
-		Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1);
-		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w);
-		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1);
+		Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse);
+		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w,horizontal,reverse);
+		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse);
 		Dtype x_diff = (1- g1_data - g2_data - g3_data) * h_diff;
 		set_data(X_diff,num,channels,height,width,n,c,h,w,x_diff);
 	
 		// g_diff = h_diff * (h_data(t-1) - x_data)
 		Dtype h1_minus1_data = get_data(H,num,channels,height,width,n,c,h-1,w-1); 
 		Dtype g1_diff = h_diff * (h1_minus1_data - x_data);
-		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h-1,w-1,g1_diff);
+		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h-1,w-1,g1_diff,horizontal,reverse);
 
 		Dtype h2_minus1_data = get_data(H,num,channels,height,width,n,c,h-1,w); 
 		Dtype g2_diff = h_diff * (h2_minus1_data - x_data);
-		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h-1,w,g2_diff);
+		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h-1,w,g2_diff,horizontal,reverse);
 
 		Dtype h3_minus1_data = get_data(H,num,channels,height,width,n,c,h-1,w+1); 
 		Dtype g3_diff = h_diff * (h3_minus1_data - x_data);
-		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h-1,w+1,g3_diff);
+		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h-1,w+1,g3_diff,horizontal,reverse);
 	}
 }
 
 template <typename Dtype>
-__global__ void backward_one_row_bottom_top(const int count, int T, int num, int channels, int height,  int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff){
+__global__ void backward_one_row_bottom_top(const int count, int T, int num, int channels, int height,  int width, const Dtype* X, const Dtype* G1, const Dtype* G2, const Dtype* G3, const Dtype* H, Dtype* X_diff, Dtype* G1_diff, Dtype* G2_diff, Dtype* G3_diff, Dtype* H_diff, bool horizontal, bool reverse){
 	for(int index = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x; index < count; index += blockDim.x * gridDim.x * gridDim.y){ 
 	//CUDA kernel loop, index trace the current thread
 		int wc_count = width * channels;
@@ -443,39 +506,39 @@ __global__ void backward_one_row_bottom_top(const int count, int T, int num, int
 
 		//h(t)_diff += h(t+1)_diff * g(t+1) if t<T
 		Dtype add1_h3_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w-1);
-		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w-1);
+		Dtype add1_g3_data = get_gate(G3,num,channels,height,width,n,c,h,w,h-1,w-1,horizontal,reverse);
 
 		Dtype add1_h2_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w);
-		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w);
+		Dtype add1_g2_data = get_gate(G2,num,channels,height,width,n,c,h,w,h-1,w,horizontal,reverse);
 
 		Dtype add1_h1_diff = get_data(H_diff,num,channels,height,width,n,c,h-1,w+1);
-		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1);
+		Dtype add1_g1_data = get_gate(G1,num,channels,height,width,n,c,h,w,h-1,w+1,horizontal,reverse);
 
 		h_diff = h_diff + add1_h3_diff * add1_g3_data + add1_h2_diff * add1_g2_data + add1_h1_diff * add1_g1_data;
 	
 		set_data(H_diff,num,channels,height,width,n,c,h,w,h_diff); 
 
 		//x(t)_diff=(1-g(t))*h(t)_diff
-		Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1);
-		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w);
-		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1);
+		Dtype g1_data =  get_gate(G1,num,channels,height,width,n,c,h,w,h+1,w-1,horizontal,reverse);
+		Dtype g2_data =  get_gate(G2,num,channels,height,width,n,c,h,w,h+1,w,horizontal,reverse);
+		Dtype g3_data =  get_gate(G3,num,channels,height,width,n,c,h,w,h+1,w+1,horizontal,reverse);
  		Dtype x_diff = (1- g1_data -g2_data -g3_data) * h_diff;
 		set_data(X_diff,num,channels,height,width,n,c,h,w,x_diff);
 
 		// g_diff = h_diff * (h_data(t-1) - x_data)
 		Dtype h1_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w-1); 
 		Dtype g1_diff = h_diff * (h1_minus1_data - x_data);
-		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h+1,w-1,g1_diff);
+		set_gate(G1_diff,num,channels,height,width,n,c,h,w,h+1,w-1,g1_diff,horizontal,reverse);
 
 		//Dtype g2_diff = h_diff * g2_idx * x_data * -1;
 		Dtype h2_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w); 
 		Dtype g2_diff = h_diff * (h2_minus1_data - x_data);
-		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h+1,w,g2_diff);      
+		set_gate(G2_diff,num,channels,height,width,n,c,h,w,h+1,w,g2_diff,horizontal,reverse);      
 
 		//Dtype g3_diff = h_diff * g3_idx * x_data * -1;
 		Dtype h3_minus1_data = get_data(H,num,channels,height,width,n,c,h+1,w+1); 
 		Dtype g3_diff = h_diff * (h3_minus1_data - x_data);
-		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w+1,g3_diff);
+		set_gate(G3_diff,num,channels,height,width,n,c,h,w,h+1,w+1,g3_diff,horizontal,reverse);
 	}
 }
 
@@ -527,7 +590,7 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 
 			CheckLaunchParam(dimGrid, dimBlock, "SPN left->right forward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
-			forward_one_col_left_right<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H);
+			forward_one_col_left_right<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, horizontal_, reverse_);
 		}
 	}else if(horizontal_ && reverse_){ // right to left
 		/*logic same as previous*/
@@ -541,7 +604,7 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 
 			CheckLaunchParam(dimGrid, dimBlock, "SPN right->left forward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
-			forward_one_col_right_left<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H);
+			forward_one_col_right_left<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, horizontal_, reverse_);
 		}
 	}else if(!horizontal_ && !reverse_){ // top to bottom
 		/*logic same as previous*/
@@ -556,7 +619,7 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 			CheckLaunchParam(dimGrid, dimBlock, "SPN top->bottom forward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 
-			forward_one_row_top_bottom<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H);
+			forward_one_row_top_bottom<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, horizontal_, reverse_);
 		}
 	}else{  //bottom to top
 		/*logic same as previous*/
@@ -571,7 +634,7 @@ inline void SPNForward(const Tensor<gpu, 4, Dtype> &data,
 			CheckLaunchParam(dimGrid, dimBlock, "SPN bottom->top forward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 	
-			forward_one_row_bottom_top<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H);
+			forward_one_row_bottom_top<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, horizontal_, reverse_);
 		}
 	}
 /*END allocate kernel*/
@@ -631,13 +694,13 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 		const int n_blocks_need = ((n_operation_parallel - 1) / NUM_THREADS_BLOCK) + 1;
 		const int n_grids_need = ((n_blocks_need - 1) / NUM_BLOCKS_GRID) + 1;
 
-		for(int current_col = 0; current_col < width; current_col++){ //iterate through the column
+		for(int current_col = width - 1; current_col >= 0; current_col--){ //iterate through the column
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
 			CheckLaunchParam(dimGrid, dimBlock, "SPN left->right backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
-			backward_one_col_left_right<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
+			backward_one_col_left_right<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff, horizontal_, reverse_);
 		}
 	}else if(horizontal_ && reverse_){ // right to left
 		/*logic same as previous*/
@@ -645,13 +708,13 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 		const int n_blocks_need = ((n_operation_parallel - 1) / NUM_THREADS_BLOCK) + 1;
 		const int n_grids_need = ((n_blocks_need - 1) / NUM_BLOCKS_GRID) + 1;
 
-		for(int current_col = width - 1; current_col >= 0; current_col--){
+		for(int current_col = 0; current_col < width; current_col++){
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
 			CheckLaunchParam(dimGrid, dimBlock, "SPN right->left backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
-			backward_one_col_right_left<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
+			backward_one_col_right_left<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_col, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff, horizontal_, reverse_);
 		}
 	}else if(!horizontal_ && !reverse_){ // top to bottom
 		/*logic same as previous*/
@@ -659,14 +722,14 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 		const int n_blocks_need = ((n_operation_parallel - 1) / NUM_THREADS_BLOCK) + 1;
 		const int n_grids_need = ((n_blocks_need - 1) / NUM_BLOCKS_GRID) + 1;
 
-		for(int current_row = 0; current_row < height; current_row++){
+		for(int current_row = height - 1; current_row >= 0; current_row--){
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
 			CheckLaunchParam(dimGrid, dimBlock, "SPN top->bottom backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 
-			backward_one_row_top_bottom<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
+			backward_one_row_top_bottom<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff, horizontal_, reverse_);
 		}
 	}else{  //bottom to top
 		/*logic same as previous*/
@@ -674,14 +737,14 @@ inline void SPNBackward(const Tensor<gpu, 4, Dtype> &data,
 		const int n_blocks_need = ((n_operation_parallel - 1) / NUM_THREADS_BLOCK) + 1;
 		const int n_grids_need = ((n_blocks_need - 1) / NUM_BLOCKS_GRID) + 1;		
 
-		for(int current_row = height - 1; current_row >= 0; current_row--){
+		for(int current_row = 0; current_row < width; current_row++){
 			dim3 dimGrid(NUM_BLOCKS_GRID, n_grids_need);
 			dim3 dimBlock(NUM_THREADS_BLOCK);
 
 			CheckLaunchParam(dimGrid, dimBlock, "SPN bottom->top backward"); //check whether dimGrid or dimBlock is out of range
 			cudaStream_t stream = Stream<gpu>::GetStream(out.stream_); //??not sure where to find the definition of stream_
 	
-			backward_one_row_bottom_top<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff);
+			backward_one_row_bottom_top<Dtype><<<dimGrid, dimBlock, 0, stream>>>(n_operation_parallel, current_row, n_batch, n_channel, height, width, X, G1, G2, G3, H, X_diff, G1_diff, G2_diff, G3_diff, H_diff, horizontal_, reverse_);
 		}
 	}
 /*END allocate kernel*/
